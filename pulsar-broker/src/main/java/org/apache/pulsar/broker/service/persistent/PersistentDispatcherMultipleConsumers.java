@@ -264,6 +264,8 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
 
                 havePendingReplayRead = true;
                 minReplayedPosition = messagesToReplayNow.first();
+
+                // asyncReplayEntries 从ledger读取完成后会回调 this#asyncReplayEntries 方法来发送给consumer
                 Set<? extends Position> deletedMessages = topic.isDelayedDeliveryEnabled()
                         ? asyncReplayEntriesInOrder(messagesToReplayNow) : asyncReplayEntries(messagesToReplayNow);
                 // clear already acked positions from replay bucket
@@ -295,6 +297,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
                     minReplayedPosition = null;
                 }
 
+                // 读取完成后通过this#readEntriesComplete 来发送到consumer
                 cursor.asyncReadEntriesOrWait(messagesToRead, bytesToRead, this,
                         ReadType.Normal, topic.getMaxReadPosition());
             } else {

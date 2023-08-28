@@ -2017,9 +2017,12 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                 // Cursor was placed past the end of one ledger, move it to the
                 // beginning of the next ledger
                 Long nextLedgerId = ledgers.ceilingKey(ledger.getId() + 1);
+
+                // 如果当前ledger已经没有可读的entry, 将readPosition设为下一个ledger, 如果没到maxPosition, 则开始读下一个
                 if (nextLedgerId != null) {
                     opReadEntry.updateReadPosition(new PositionImpl(nextLedgerId, 0));
                 } else {
+                    // 当leger正在切换时, 拿上一个ledgerId来获取下一个ledger时, nextLedgerId==null
                     opReadEntry.updateReadPosition(new PositionImpl(ledger.getId() + 1, 0));
                 }
             } else {
