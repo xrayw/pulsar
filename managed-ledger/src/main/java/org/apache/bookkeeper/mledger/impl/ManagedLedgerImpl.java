@@ -790,6 +790,11 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         }
         pendingAddEntries.add(addOperation);
 
+        // 1. 如果关闭中/创建中, 等待其他线程执行创建的操作就行了. 创建完成后会去任务队列里处理遗留的消息
+        // 2. 如果已经关闭, 通过CAS改为创建中, cas成功的线程执行创建操作. cas失败的等待其他线程执行即可
+        // 3. 写msg到当前的ledger,
+
+        // 2这里为什么会存在一个ClosedLedger状态? -> close当前ledger后, 没有消息写入时是不会创建新的ledger的. 所以有一个closedLedger的状态
         if (state == State.ClosingLedger || state == State.CreatingLedger) {
             // We don't have a ready ledger to write into
             // We are waiting for a new ledger to be created
@@ -805,6 +810,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                 }
             }
         } else if (state == State.ClosedLedger) {
+            // 如果没有pendingTask, 关闭后不会新建ledger, 需要后续的写入操作自行创建
             // No ledger and no pending operations. Create a new ledger
             if (STATE_UPDATER.compareAndSet(this, State.ClosedLedger, State.CreatingLedger)) {
                 log.info("[{}] Creating a new ledger", name);
@@ -832,9 +838,10 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                 }
                 // This entry will be the last added to current ledger
                 addOperation.setCloseWhenDone(true);
-                STATE_UPDATER.set(this, State.ClosingLedger);
+                STATE_UPDATER.set(this, State.ClosingLedger);    // 更新状态为ClosingLedger, 后面新来的消息会加到pendingTask里. 等待新的ledger创建成功后再写入
             }
-            addOperation.initiate();
+            addOperation.initiate();        // 执行写入
+            // 添加完成后会调用OpEntry的addComplete -> safeRun, safeRun里会去执行closeWhenDone等逻辑
         }
         // mark add entry activity
         lastAddEntryTimeMs = System.currentTimeMillis();
@@ -1600,6 +1607,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         store.asyncUpdateLedgerIds(name, mlInfo, ledgersStat, callback);
     }
 
+    // 创建ledger完成后将pending的消息写入到新的ledger
     public synchronized void updateLedgersIdsComplete(@Nullable LedgerHandle originalCurrentLedger) {
         STATE_UPDATER.set(this, State.LedgerOpened);
         // Delete original "currentLedger" if it has been removed from "ledgers".
@@ -1641,6 +1649,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                 log.debug("[{}] Sending {}", name, op);
             }
 
+            // 写消息到ledger
             if (currentLedgerIsFull()) {
                 STATE_UPDATER.set(this, State.ClosingLedger);
                 op.setCloseWhenDone(true);

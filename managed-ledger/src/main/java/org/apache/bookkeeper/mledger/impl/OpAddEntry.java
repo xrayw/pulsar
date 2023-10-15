@@ -142,6 +142,7 @@ public class OpAddEntry extends SafeRunnable implements AddCallback, CloseCallba
                     }
                 }
             }
+            // 同一个ledger的消息会顺序写入
             ledger.asyncAddEntry(duplicateBuffer, this, addOpCount);
         } else {
             log.warn("[{}] initiate with unexpected state {}, expect OPEN state.", ml.getName(), state);
@@ -196,6 +197,7 @@ public class OpAddEntry extends SafeRunnable implements AddCallback, CloseCallba
         }
     }
 
+    // 在addComplete里执行该方法
     // Called in executor hashed on managed ledger name, once the add operation is complete
     @Override
     public void safeRun() {
@@ -203,7 +205,7 @@ public class OpAddEntry extends SafeRunnable implements AddCallback, CloseCallba
             payloadProcessorHandle.release();
         }
         // Remove this entry from the head of the pending queue
-        OpAddEntry firstInQueue = ml.pendingAddEntries.poll();
+        OpAddEntry firstInQueue = ml.pendingAddEntries.poll();      // TODO 如何保证的顺序性? 如何确保第一个addEntry就是当前的addEntry
         if (firstInQueue == null) {
             return;
         }

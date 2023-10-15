@@ -403,7 +403,7 @@ public class Consumer {
                 return CompletableFuture.completedFuture(null);
             }
             PositionImpl position = PositionImpl.EARLIEST;
-            if (ack.getMessageIdsCount() == 1) {
+            if (ack.getMessageIdsCount() == 1) {        // always true
                 MessageIdData msgId = ack.getMessageIdAt(0);
                 if (msgId.getAckSetsCount() > 0) {
                     long[] ackSets = new long[msgId.getAckSetsCount()];
@@ -448,7 +448,7 @@ public class Consumer {
             MessageIdData msgId = ack.getMessageIdAt(i);
             PositionImpl position;
             long ackedCount = 0;
-            long batchSize = getBatchSize(msgId);
+            long batchSize = getBatchSize(msgId);       // batchSize是说批量发送的消息数量. (批量消息是当成一个消息推送的)
             Consumer ackOwnerConsumer = getAckOwnerConsumer(msgId.getLedgerId(), msgId.getEntryId());
             if (msgId.getAckSetsCount() > 0) {
                 long[] ackSets = new long[msgId.getAckSetsCount()];
@@ -473,7 +473,11 @@ public class Consumer {
 
             positionsAcked.add(position);
 
-            checkCanRemovePendingAcksAndHandle(position, msgId);
+            // PIP-54
+            // client消费完一个match message, ack的position不会传ackSet参数了. 代表该batch message全被消费了
+
+            // pendingAcks存在consumer, cursor存 batchDeletedIndexes, individualDeletedMessages
+            checkCanRemovePendingAcksAndHandle(position, msgId);        // remove 非批量消息
 
             checkAckValidationError(ack, position);
 
@@ -487,6 +491,8 @@ public class Consumer {
                 //check if the position can remove from the consumer pending acks.
                 // the bit set is empty in pending ack handle.
                 if (((PositionImpl) position).getAckSet() != null) {
+
+                    // 如果batch msg 的消息全都被ack了. 也可以删除
                     if (((PersistentSubscription) subscription)
                             .checkIsCanDeleteConsumerPendingAck((PositionImpl) position)) {
                         removePendingAcks((PositionImpl) position);
@@ -587,11 +593,15 @@ public class Consumer {
         return batchSize;
     }
 
+    /**
+     * 判断该batch msg, 本次ack了多少条msg
+     */
     private long getAckedCountForBatchIndexLevelEnabled(PositionImpl position, long batchSize, long[] ackSets,
                                                         Consumer consumer) {
         long ackedCount = 0;
         if (isAcknowledgmentAtBatchIndexLevelEnabled && Subscription.isIndividualAckMode(subType)
             && consumer.getPendingAcks().get(position.getLedgerId(), position.getEntryId()) != null) {
+            // ackSet中为1的代表还未被ack的
             long[] cursorAckSet = getCursorAckSet(position);
             if (cursorAckSet != null) {
                 BitSetRecyclable cursorBitSet = BitSetRecyclable.create().resetWords(cursorAckSet);
@@ -636,6 +646,11 @@ public class Consumer {
         }
     }
 
+    /**
+     * - client消费完一个match message, ack的position不会传ackSet参数了. 可能两个方面的考量
+     *     1. 节省资源(流量, 内存)
+     *     2. 兼容老版本的client, 老版本没有ack batch message local index, 即没有ackSet参数, 代表ack整个批量消息. 依然沿用了这种逻辑.
+     */
     private void checkCanRemovePendingAcksAndHandle(PositionImpl position, MessageIdData msgId) {
         if (Subscription.isIndividualAckMode(subType) && msgId.getAckSetsCount() == 0) {
             removePendingAcks(position);
