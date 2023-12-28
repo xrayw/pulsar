@@ -1867,7 +1867,7 @@ public class ManagedCursorImpl implements ManagedCursor {
         // Apply rate limiting to mark-delete operations
         if (markDeleteLimiter != null && !markDeleteLimiter.tryAcquire()) {
             isDirty = true;     // 会有任务定期执行.
-            updateLastMarkDeleteEntryToLatest(newPosition, properties);
+            updateLastMarkDeleteEntryToLatest(newPosition, properties); // todo confirm 这里获取limiter失败后, 定时任务还没来得及持久化的情况下, 如果系统崩溃, 会不会造成信息丢失
             callback.markDeleteComplete(ctx);
             return;
         }

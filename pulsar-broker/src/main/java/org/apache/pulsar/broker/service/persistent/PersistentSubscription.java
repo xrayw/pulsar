@@ -361,6 +361,9 @@ public class PersistentSubscription extends AbstractSubscription implements Subs
         dispatcher.consumerFlow(consumer, additionalNumberOfMessages);
     }
 
+    /**
+     * 将ack的位置写入到cursor里去持久化, 并删除重推任务, 事务里对应的数据, 并推进markDeletedPotion
+     */
     @Override
     public void acknowledgeMessage(List<Position> positions, AckType ackType, Map<String, Long> properties) {
         Position previousMarkDeletePosition = cursor.getMarkDeletedPosition();
@@ -383,6 +386,7 @@ public class PersistentSubscription extends AbstractSubscription implements Subs
             if (log.isDebugEnabled()) {
                 log.debug("[{}][{}] Individual acks on {}", topicName, subName, positions);
             }
+            // todo 异步删除, 突然崩溃会不会数据异常?
             cursor.asyncDelete(positions, deleteCallback, previousMarkDeletePosition);
             if (topic.getBrokerService().getPulsar().getConfig().isTransactionCoordinatorEnabled()) {
                 positions.forEach(position -> {

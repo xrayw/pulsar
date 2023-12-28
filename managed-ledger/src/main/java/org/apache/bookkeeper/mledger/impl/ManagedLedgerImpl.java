@@ -349,6 +349,9 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         this.inactiveLedgerRollOverTimeMs = config.getInactiveLedgerRollOverTimeMs();
     }
 
+    /**
+     * 加载topic的所有消息metadata, 初始化 ledgers 字段, 最后一个ledger可能没有更新entries字段等信息到metadataStore, 所以需要从bookie里读取相关信息.
+     */
     synchronized void initialize(final ManagedLedgerInitializeLedgerCallback callback, final Object ctx) {
         log.info("Opening managed ledger {}", name);
 
@@ -440,6 +443,9 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         scheduleTimeoutTask();
     }
 
+    /**
+     * 加载MetaStore中的ledger信息以及bookie中的`cursor`信息
+     */
     private synchronized void initializeBookKeeper(final ManagedLedgerInitializeLedgerCallback callback) {
         if (log.isDebugEnabled()) {
             log.debug("[{}] initializing bookkeeper; ledgers {}", name, ledgers);
@@ -510,6 +516,8 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
 
                 lastConfirmedEntry = new PositionImpl(lh.getId(), -1);
                 // bypass empty ledgers, find last ledger with Message if possible.
+
+                // 从后往前数, 去掉新老的ledger里的empty ledger
                 while (lastConfirmedEntry.getEntryId() == -1) {
                     Map.Entry<Long, LedgerInfo> formerLedger = ledgers.lowerEntry(lastConfirmedEntry.getLedgerId());
                     if (formerLedger != null) {
@@ -1697,6 +1705,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
             mbean.startDataLedgerDeleteOp();
         }
 
+        // 这里更新已存在的 topic ledgers metadata
         trimConsumedLedgersInBackground();
 
         maybeOffloadInBackground(NULL_OFFLOAD_PROMISE);

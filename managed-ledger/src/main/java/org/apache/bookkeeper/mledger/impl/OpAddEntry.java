@@ -142,7 +142,6 @@ public class OpAddEntry extends SafeRunnable implements AddCallback, CloseCallba
                     }
                 }
             }
-            // 同一个ledger的消息会顺序写入
             ledger.asyncAddEntry(duplicateBuffer, this, addOpCount);
         } else {
             log.warn("[{}] initiate with unexpected state {}, expect OPEN state.", ml.getName(), state);

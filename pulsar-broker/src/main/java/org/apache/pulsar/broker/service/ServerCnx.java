@@ -2383,6 +2383,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                 }, ctx.executor());
     }
 
+    // 处理TransactionBuffer(生产消息)中的事务commit/abort
     @Override
     protected void handleEndTxnOnPartition(CommandEndTxnOnPartition command) {
         final long requestId = command.getRequestId();
@@ -2460,6 +2461,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         });
     }
 
+    // 处理pendingAckHandle (ack消费) 的事务commit/abort
     @Override
     protected void handleEndTxnOnSubscription(CommandEndTxnOnSubscription command) {
         final long requestId = command.getRequestId();
