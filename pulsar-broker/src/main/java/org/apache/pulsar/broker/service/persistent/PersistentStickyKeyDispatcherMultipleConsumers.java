@@ -181,6 +181,11 @@ public class PersistentStickyKeyDispatcherMultipleConsumers extends PersistentDi
         // This may happen when consumer closed. See issue #12885 for details.
         if (!allowOutOfOrderDelivery) {
             // 不允许乱序, 要求严格有序
+            // fix的问题直接看github issue https://github.com/apache/pulsar/issues/12885
+            // 还有1种场景如下:
+
+            //   Q: 如果sent to consumer过程中client有unack 之前的消息, 这种情况下是如何保证顺序的
+            //   A: Key_shared模式下, unack会打破严格有序, 无法保证
             NavigableSet<PositionImpl> messagesToReplayNow = this.getMessagesToReplayNow(1);
             if (messagesToReplayNow != null && !messagesToReplayNow.isEmpty()) {
                 PositionImpl replayPosition = messagesToReplayNow.first();
@@ -352,6 +357,10 @@ public class PersistentStickyKeyDispatcherMultipleConsumers extends PersistentDi
     /**
      * https://github.com/apache/pulsar/pull/7106 实现了初版的key_shared下的有序保证
      * https://github.com/apache/pulsar/pull/8292 修复了下面注释里描述的后加入的consumer, 消费了在redeliverMessage里不该消费的信息
+     *
+     * key_shared模式下, unack行为就打破了严格有序, unack的消息需要按规则先分配给所有consumer(包括新加入的 [messageId<joinedReadPosition]), 然后再正常分配messageId>=joinedReadPosition</joinedRedPosition的消息
+     *
+     * 如果发现redeliveryMessages里有消息, 说明有[重推/定时到期]消息需要优先处理, 此时,正常读取的消息就需要延后发送. 先处理redeliveryMessage里的消息, 所以如果joinedReadPosition之前的消息还没消费完, 需要先消费joinedReadPosition之前的消息.
      */
     private int getRestrictedMaxEntriesForConsumer(Consumer consumer, List<Entry> entries, int maxMessages,
             ReadType readType, Set<Integer> stickyKeyHashes) {
@@ -396,16 +405,18 @@ public class PersistentStickyKeyDispatcherMultipleConsumers extends PersistentDi
 
         if (readType == ReadType.Replay) {
             // linkedHashMap 按照加入时间, 第一个的readPosition就是最小的
+            // 如果是重推 replay的消息, 那么只能推recentlyJoinedConsumer里第一个加入时readPosition小的元素
             PositionImpl minReadPositionForRecentJoinedConsumer = recentlyJoinedConsumers.values().iterator().next();
             if (minReadPositionForRecentJoinedConsumer != null
                     && minReadPositionForRecentJoinedConsumer.compareTo(maxReadPosition) < 0) {
                 maxReadPosition = minReadPositionForRecentJoinedConsumer;
             }
         }
-        // 如果是normal, 就给他发加入后读取到的消息
+        // 如果是normal, 但redeliveryMessages里还有需要优先处理的消息, 需要先处理redeliveryMessages里的消息, joinedReadPosition之后的需要等前面的消息处理完成后才能消费
         // 如果是replay, 就给他发recentlyJoinedConsumers里最小的 readPosition 后的消息
-        // 这里可以用二分搜索加快速度
+        // 如果消息太多, 这里可以用二分搜索加快速度
 
+        // markDeletedPosition < joinedReadPosition之前, 该Consumer需要先把joinedReadPosition之前的消息处理掉才能开始消费joinedReadPosition之后的.
         // Here, the consumer is one that has recently joined, so we can only send messages that were
         // published before it has joined.
         for (int i = 0; i < maxMessages; i++) {

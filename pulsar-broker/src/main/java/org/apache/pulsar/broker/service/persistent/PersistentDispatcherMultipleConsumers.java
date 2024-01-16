@@ -256,6 +256,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
 
             NavigableSet<PositionImpl> messagesToReplayNow = getMessagesToReplayNow(messagesToRead);
 
+            // 如果有失败/定时到期的需要重推的,需要优先处理重推的
             if (!messagesToReplayNow.isEmpty()) {
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] Schedule replay of {} messages for {} consumers", name, messagesToReplayNow.size(),
@@ -289,6 +290,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
                             consumerList.size());
                 }
                 havePendingRead = true;
+                // getMessagesToReplayNow 方法会从延迟队列里删除, 所以设置minReplayedPosition后需要再add进去
                 NavigableSet<PositionImpl> toReplay = getMessagesToReplayNow(1);
                 if (!toReplay.isEmpty()) {
                     minReplayedPosition = toReplay.first();
