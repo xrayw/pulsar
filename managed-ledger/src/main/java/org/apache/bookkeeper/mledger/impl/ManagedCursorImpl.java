@@ -174,7 +174,7 @@ public class ManagedCursorImpl implements ManagedCursor {
         position.ackSet = null;
         return position;
     };
-    private final LongPairRangeSet<PositionImpl> individualDeletedMessages;
+    private final LongPairRangeSet<PositionImpl> individualDeletedMessages;     // 存的是已删除的消息区间
 
     // Maintain the deletion status for batch messages
     // (ledgerId, entryId) -> deletion indexes
@@ -1737,8 +1737,9 @@ public class ManagedCursorImpl implements ManagedCursor {
             // eg: (2:10..3:15] can be returned as (2:10..2:15],[3:0..3:15]. So, try to iterate over connected range and
             // found the last non-connected range which gives new markDeletePosition
             while (positionAfterNewMarkDelete.compareTo(ledger.lastConfirmedEntry) <= 0) {
-                if (individualDeletedMessages.contains(positionAfterNewMarkDelete.getLedgerId(),
-                        positionAfterNewMarkDelete.getEntryId())) {
+
+                // individualDeletedMessages 存的是已删除的消息区间
+                if (individualDeletedMessages.contains(positionAfterNewMarkDelete.getLedgerId(), positionAfterNewMarkDelete.getEntryId())) {
                     Range<PositionImpl> rangeToBeMarkDeleted = individualDeletedMessages.rangeContaining(
                             positionAfterNewMarkDelete.getLedgerId(), positionAfterNewMarkDelete.getEntryId());
                     newMarkDeletePosition = rangeToBeMarkDeleted.upperEndpoint();
@@ -1865,8 +1866,8 @@ public class ManagedCursorImpl implements ManagedCursor {
 
         // Apply rate limiting to mark-delete operations
         if (markDeleteLimiter != null && !markDeleteLimiter.tryAcquire()) {
-            isDirty = true;
-            updateLastMarkDeleteEntryToLatest(newPosition, properties);
+            isDirty = true;     // 会有任务定期执行.
+            updateLastMarkDeleteEntryToLatest(newPosition, properties); // todo confirm 这里获取limiter失败后, 定时任务还没来得及持久化的情况下, 如果系统崩溃, 会不会造成信息丢失
             callback.markDeleteComplete(ctx);
             return;
         }
@@ -2107,6 +2108,7 @@ public class ManagedCursorImpl implements ManagedCursor {
 
                 if (individualDeletedMessages.contains(position.getLedgerId(), position.getEntryId())
                     || position.compareTo(markDeletePosition) <= 0) {
+                    // < markDeletePosition直接删除
                     if (config.isDeletionAtBatchIndexLevelEnabled() && batchDeletedIndexes != null) {
                         BitSetRecyclable bitSetRecyclable = batchDeletedIndexes.remove(position);
                         if (bitSetRecyclable != null) {
@@ -2137,6 +2139,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                             individualDeletedMessages);
                     }
                 } else if (config.isDeletionAtBatchIndexLevelEnabled() && batchDeletedIndexes != null) {
+                    // ack batch message中的消息
                     BitSetRecyclable givenBitSet = BitSetRecyclable.create().resetWords(position.ackSet);
                     BitSetRecyclable bitSet = batchDeletedIndexes.computeIfAbsent(position, (v) -> givenBitSet);
                     if (givenBitSet != bitSet) {
@@ -2144,6 +2147,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                         givenBitSet.recycle();
                     }
                     if (bitSet.isEmpty()) {
+                        // batch message 全部被ack, 添加到已删除区间individualDeletedMessages 和 batchDeletedIndexes存的batch message ackSet
                         PositionImpl previousPosition = ledger.getPreviousPosition(position);
                         individualDeletedMessages.addOpenClosed(previousPosition.getLedgerId(),
                             previousPosition.getEntryId(),
@@ -2182,6 +2186,8 @@ public class ManagedCursorImpl implements ManagedCursor {
             // If the lowerBound is ahead of MarkDelete, verify if there are any entries in-between
             if (range.lowerEndpoint().compareTo(markDeletePosition) <= 0 || ledger
                     .getNumberOfEntries(Range.openClosed(markDeletePosition, range.lowerEndpoint())) <= 0) {
+                // 1. lower < markDeletePos <= upper
+                // 2. markDeletePos < lower, 检查markDeletePos到lower这段区间是否没有消息了
 
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] Found a position range to mark delete for cursor {}: {} ", ledger.getName(),

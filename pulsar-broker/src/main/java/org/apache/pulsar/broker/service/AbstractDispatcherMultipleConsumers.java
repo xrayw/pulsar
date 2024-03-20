@@ -168,6 +168,7 @@ public abstract class AbstractDispatcherMultipleConsumers extends AbstractBaseDi
      * @return -1 if couldn't find any available consumer
      */
     private int getConsumerFromHigherPriority(int targetPriority) {
+        // 如果比当前priority优先级更高的consumer还可以接收消息(permit>0), 则先推给优先级更高的consumer
         for (int i = 0; i < currentConsumerRoundRobinIndex; i++) {
             Consumer consumer = consumerList.get(i);
             if (consumer.getPriorityLevel() < targetPriority) {

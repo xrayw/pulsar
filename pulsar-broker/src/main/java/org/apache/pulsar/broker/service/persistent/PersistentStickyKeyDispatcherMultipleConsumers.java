@@ -131,6 +131,7 @@ public class PersistentStickyKeyDispatcherMultipleConsumers extends PersistentDi
 
     @Override
     public synchronized void removeConsumer(Consumer consumer) throws BrokerServiceException {
+
         // The consumer must be removed from the selector before calling the superclass removeConsumer method.
         // In the superclass removeConsumer method, the pending acks that the consumer has are added to
         // redeliveryMessages. If the consumer has not been removed from the selector at this point,
@@ -179,6 +180,12 @@ public class PersistentStickyKeyDispatcherMultipleConsumers extends PersistentDi
         // A corner case that we have to retry a readMoreEntries in order to preserver order delivery.
         // This may happen when consumer closed. See issue #12885 for details.
         if (!allowOutOfOrderDelivery) {
+            // 不允许乱序, 要求严格有序
+            // fix的问题直接看github issue https://github.com/apache/pulsar/issues/12885
+            // 还有1种场景如下:
+
+            //   Q: 如果sent to consumer过程中client有unack 之前的消息, 这种情况下是如何保证顺序的
+            //   A: Key_shared模式下, unack会打破严格有序, 无法保证
             NavigableSet<PositionImpl> messagesToReplayNow = this.getMessagesToReplayNow(1);
             if (messagesToReplayNow != null && !messagesToReplayNow.isEmpty()) {
                 PositionImpl replayPosition = messagesToReplayNow.first();
@@ -328,6 +335,9 @@ public class PersistentStickyKeyDispatcherMultipleConsumers extends PersistentDi
             // ahead in the stream while the new consumers are not ready to accept the new messages,
             // therefore would be most likely only increase the distance between read-position and mark-delete
             // position.
+
+            // 设置该标记, 表示当前读取的这批消息全部是发往暂时busy的consumer的, 暂存这批消息, 继续往后读normal消息, 忽略replay消息.
+
             isDispatcherStuckOnReplays = true;
             // readMoreEntries should run regardless whether or not stuck is caused by
             // stuckConsumers for avoid stopping dispatch.
@@ -344,11 +354,22 @@ public class PersistentStickyKeyDispatcherMultipleConsumers extends PersistentDi
         return false;
     }
 
+    /**
+     * https://github.com/apache/pulsar/pull/7106 实现了初版的key_shared下的有序保证
+     * https://github.com/apache/pulsar/pull/8292 修复了下面注释里描述的后加入的consumer, 消费了在redeliverMessage里不该消费的信息
+     *
+     * key_shared模式下, unack行为就打破了严格有序, unack的消息需要按规则先分配给所有consumer(包括新加入的 [messageId<joinedReadPosition]), 然后再正常分配messageId>=joinedReadPosition</joinedRedPosition的消息
+     *
+     * 如果发现redeliveryMessages里有消息, 说明有[重推/定时到期]消息需要优先处理, 此时,正常读取的消息就需要延后发送. 先处理redeliveryMessage里的消息, 所以如果joinedReadPosition之前的消息还没消费完, 需要先消费joinedReadPosition之前的消息.
+     */
     private int getRestrictedMaxEntriesForConsumer(Consumer consumer, List<Entry> entries, int maxMessages,
             ReadType readType, Set<Integer> stickyKeyHashes) {
         if (maxMessages == 0) {
             return 0;
         }
+
+        // stickyKeyHash 一致性hash 环上的hash值, 相同key的值是一样的
+        // 这个if是说如果redeliveryMessages中相同hash已经有未发送的消息, 为了消息严格有序, 则不能发送当前读的比redeliveryMessages还靠后的消息.
         if (readType == ReadType.Normal && stickyKeyHashes != null
                 && redeliveryMessages.containsStickyKeyHashes(stickyKeyHashes)) {
             // If redeliveryMessages contains messages that correspond to the same hash as the messages
@@ -367,6 +388,8 @@ public class PersistentStickyKeyDispatcherMultipleConsumers extends PersistentDi
             return maxMessages;
         }
 
+        // 读取出来的消息如果没投递出去, 会把索引加到 redeliveryMessages中, unack的也会加到redeliveryMessages中
+
         // If the read type is Replay, we should avoid send messages that hold by other consumer to the new consumers,
         // For example, we have 10 messages [0,1,2,3,4,5,6,7,8,9]
         // If the consumer0 get message 0 and 1, and does not acked message 0, then consumer1 joined,
@@ -381,12 +404,19 @@ public class PersistentStickyKeyDispatcherMultipleConsumers extends PersistentDi
         // But the message [2,3] should not dispatch to consumer2.
 
         if (readType == ReadType.Replay) {
+            // linkedHashMap 按照加入时间, 第一个的readPosition就是最小的
+            // 如果是重推 replay的消息, 那么只能推recentlyJoinedConsumer里第一个加入时readPosition小的元素
             PositionImpl minReadPositionForRecentJoinedConsumer = recentlyJoinedConsumers.values().iterator().next();
             if (minReadPositionForRecentJoinedConsumer != null
                     && minReadPositionForRecentJoinedConsumer.compareTo(maxReadPosition) < 0) {
                 maxReadPosition = minReadPositionForRecentJoinedConsumer;
             }
         }
+        // 如果是normal, 但redeliveryMessages里还有需要优先处理的消息, 需要先处理redeliveryMessages里的消息, joinedReadPosition之后的需要等前面的消息处理完成后才能消费
+        // 如果是replay, 就给他发recentlyJoinedConsumers里最小的 readPosition 后的消息
+        // 如果消息太多, 这里可以用二分搜索加快速度
+
+        // markDeletedPosition < joinedReadPosition之前, 该Consumer需要先把joinedReadPosition之前的消息处理掉才能开始消费joinedReadPosition之后的.
         // Here, the consumer is one that has recently joined, so we can only send messages that were
         // published before it has joined.
         for (int i = 0; i < maxMessages; i++) {
@@ -416,6 +446,9 @@ public class PersistentStickyKeyDispatcherMultipleConsumers extends PersistentDi
         });
     }
 
+    /**
+     * 如果deletedPosition比consumer刚加入时的readPosition大, 说明consumer可以开始正常消费了, 不会破坏消息严格有序了
+     */
     private boolean removeConsumersFromRecentJoinedConsumers() {
         Iterator<Map.Entry<Consumer, PositionImpl>> itr = recentlyJoinedConsumers.entrySet().iterator();
         boolean hasConsumerRemovedFromTheRecentJoinedConsumers = false;

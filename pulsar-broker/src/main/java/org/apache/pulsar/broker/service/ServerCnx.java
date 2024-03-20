@@ -1536,9 +1536,11 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
 
         // Persist the message
         if (send.hasHighestSequenceId() && send.getSequenceId() <= send.getHighestSequenceId()) {
+            // 批量发送
             producer.publishMessage(send.getProducerId(), send.getSequenceId(), send.getHighestSequenceId(),
                     headersAndPayload, send.getNumMessages(), send.isIsChunk(), send.isMarker());
         } else {
+            // 单条发送
             producer.publishMessage(send.getProducerId(), send.getSequenceId(), headersAndPayload,
                     send.getNumMessages(), send.isIsChunk(), send.isMarker());
         }
@@ -2381,6 +2383,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                 }, ctx.executor());
     }
 
+    // 处理TransactionBuffer(生产消息)中的事务commit/abort
     @Override
     protected void handleEndTxnOnPartition(CommandEndTxnOnPartition command) {
         final long requestId = command.getRequestId();
@@ -2458,6 +2461,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         });
     }
 
+    // 处理pendingAckHandle (ack消费) 的事务commit/abort
     @Override
     protected void handleEndTxnOnSubscription(CommandEndTxnOnSubscription command) {
         final long requestId = command.getRequestId();

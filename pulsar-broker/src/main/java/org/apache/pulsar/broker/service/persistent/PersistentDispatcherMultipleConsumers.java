@@ -256,6 +256,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
 
             NavigableSet<PositionImpl> messagesToReplayNow = getMessagesToReplayNow(messagesToRead);
 
+            // 如果有失败/定时到期的需要重推的,需要优先处理重推的
             if (!messagesToReplayNow.isEmpty()) {
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] Schedule replay of {} messages for {} consumers", name, messagesToReplayNow.size(),
@@ -264,6 +265,8 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
 
                 havePendingReplayRead = true;
                 minReplayedPosition = messagesToReplayNow.first();
+
+                // asyncReplayEntries 从ledger读取完成后会回调 this#readEntriesComplete 方法来发送给consumer
                 Set<? extends Position> deletedMessages = topic.isDelayedDeliveryEnabled()
                         ? asyncReplayEntriesInOrder(messagesToReplayNow) : asyncReplayEntries(messagesToReplayNow);
                 // clear already acked positions from replay bucket
@@ -287,6 +290,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
                             consumerList.size());
                 }
                 havePendingRead = true;
+                // getMessagesToReplayNow 方法会从延迟队列里删除, 所以设置minReplayedPosition后需要再add进去
                 NavigableSet<PositionImpl> toReplay = getMessagesToReplayNow(1);
                 if (!toReplay.isEmpty()) {
                     minReplayedPosition = toReplay.first();
@@ -295,6 +299,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
                     minReplayedPosition = null;
                 }
 
+                // 读取完成后通过this#readEntriesComplete 来发送到consumer
                 cursor.asyncReadEntriesOrWait(messagesToRead, bytesToRead, this,
                         ReadType.Normal, topic.getMaxReadPosition());
             } else {
