@@ -633,6 +633,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                 .thenAccept(optPolicies -> {
                     if (optPolicies.isPresent()) {
                         if (optPolicies.get().replication_clusters != null) {
+                            // 有producer的时候, 如果配置里有要同步数据的集群, 就satartReplicators去同步数据
                             Set<String> configuredClusters = Sets.newTreeSet(optPolicies.get().replication_clusters);
                             replicators.forEach((region, replicator) -> {
                                 if (configuredClusters.contains(region)) {
@@ -2883,6 +2884,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         AtomicBoolean shouldBeEnabled = new AtomicBoolean(false);
         subscriptions.forEach((name, subscription) -> {
             if (subscription.isReplicated()) {
+                // 如果该订阅状态需要被复制, 则需要同步markDeletedPosition
                 shouldBeEnabled.set(true);
             }
         });

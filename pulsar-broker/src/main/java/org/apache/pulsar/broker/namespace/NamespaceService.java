@@ -207,6 +207,9 @@ public class NamespaceService implements AutoCloseable {
         return future;
     }
 
+    /**
+     * 获取namespace的分片信息, 多少个bundle. 然后用topic定位到属于namespace里hash环的哪部分, 确定属于哪个bundle
+     */
     public CompletableFuture<NamespaceBundle> getBundleAsync(TopicName topic) {
         return bundleFactory.getBundlesAsync(topic.getNamespaceObject())
                 .thenApply(bundles -> bundles.findBundle(topic));
@@ -395,6 +398,8 @@ public class NamespaceService implements AutoCloseable {
 
         return targetMap.computeIfAbsent(bundle, (k) -> {
             CompletableFuture<Optional<LookupResult>> future = new CompletableFuture<>();
+
+            // 从zk读取是否已经有owner, 如果没有, 则路由到leader上去分一个负载最低的broker给该bundle.
 
             // First check if we or someone else already owns the bundle
             ownershipCache.getOwnerAsync(bundle).thenAccept(nsData -> {
