@@ -274,6 +274,7 @@ public class MetadataCacheImpl<T> implements MetadataCache<T>, Consumer<Notifica
         objCache.synchronous().invalidateAll();
     }
 
+    // 这里监听zk event, 实时维护缓存
     @Override
     public void accept(Notification t) {
         String path = t.getPath();

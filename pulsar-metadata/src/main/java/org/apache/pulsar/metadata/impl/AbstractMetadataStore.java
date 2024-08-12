@@ -79,7 +79,7 @@ public abstract class AbstractMetadataStore implements MetadataStoreExtended, Co
     protected AbstractMetadataStore() {
         this.executor = Executors
                 .newSingleThreadScheduledExecutor(new DefaultThreadFactory("metadata-store"));
-        registerListener(this);
+        registerListener(this);     // 监听zk event
 
         this.childrenCache = Caffeine.newBuilder()
                 .refreshAfterWrite(CACHE_REFRESH_TIME_MILLIS, TimeUnit.MILLISECONDS)
@@ -128,7 +128,7 @@ public abstract class AbstractMetadataStore implements MetadataStoreExtended, Co
     public <T> MetadataCache<T> getMetadataCache(Class<T> clazz, MetadataCacheConfig cacheConfig) {
         MetadataCacheImpl<T> metadataCache = new MetadataCacheImpl<T>(this,
                 TypeFactory.defaultInstance().constructSimpleType(clazz, null), cacheConfig);
-        metadataCaches.add(metadataCache);
+        metadataCaches.add(metadataCache);      // 加到list里, 有zk event的时候通知对应的cache add/update/delete
         return metadataCache;
     }
 

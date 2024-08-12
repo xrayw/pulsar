@@ -19,6 +19,9 @@
 package org.apache.pulsar.policies.data.loadbalancer;
 
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.google.common.collect.Range;
+import org.apache.pulsar.common.naming.NamespaceName;
+
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -69,6 +72,10 @@ public class LocalBrokerData implements LoadManagerReport {
     private int numConsumers;
     private int numProducers;
 
+    /**
+     * namespace/0x1111111-0x9999999
+     * @see org.apache.pulsar.common.naming.NamespaceBundle#getKey(NamespaceName, Range)
+     */
     // All bundles belonging to this broker.
     private Set<String> bundles;
 

@@ -389,6 +389,8 @@ public class NamespaceService implements AutoCloseable {
             LOG.debug("findBrokerServiceUrl: {} - options: {}", bundle, options);
         }
 
+        // 不同的targetMap只是用来做不同维度的加锁操作
+        // https://github.com/apache/pulsar/pull/1527
         ConcurrentOpenHashMap<NamespaceBundle, CompletableFuture<Optional<LookupResult>>> targetMap;
         if (options.isAuthoritative()) {
             targetMap = findingBundlesAuthoritative;
