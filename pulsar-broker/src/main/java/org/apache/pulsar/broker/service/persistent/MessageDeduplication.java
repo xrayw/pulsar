@@ -133,7 +133,7 @@ public class MessageDeduplication {
     public MessageDeduplication(PulsarService pulsar, PersistentTopic topic, ManagedLedger managedLedger) {
         this.pulsar = pulsar;
         this.topic = topic;
-        this.managedLedger = managedLedger;
+        this.managedLedger = managedLedger;     // ledger是topic存消息的ledger
         this.status = Status.Initialized;
         this.snapshotInterval = pulsar.getConfiguration().getBrokerDeduplicationEntriesInterval();
         this.maxNumberOfProducers = pulsar.getConfiguration().getBrokerDeduplicationMaxNumberOfProducers();
@@ -481,6 +481,9 @@ public class MessageDeduplication {
         return sequenceId != null ? sequenceId : -1;
     }
 
+    /**
+     * 定时保存topic的duplication数据, 用ledger最新的position(last add confirmed)
+     */
     public void takeSnapshot() {
         Integer interval = topic.getHierarchyTopicPolicies().getDeduplicationSnapshotIntervalSeconds().get();
         long currentTimeStamp = System.currentTimeMillis();

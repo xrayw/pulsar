@@ -183,6 +183,8 @@ public abstract class AbstractBaseDispatcher implements Dispatcher {
                     continue;
                 }
             }
+
+            // 过滤掉transaction里的marker消息和abort掉的事务里的消息
             if (msgMetadata != null && msgMetadata.hasTxnidMostBits()
                     && msgMetadata.hasTxnidLeastBits()) {
                 if (Markers.isTxnMarker(msgMetadata)) {
@@ -213,7 +215,9 @@ public abstract class AbstractBaseDispatcher implements Dispatcher {
                 entry.release();
                 individualAcknowledgeMessageIfNeeded(pos, Collections.emptyMap());
                 continue;
-            } else if (trackDelayedDelivery(entry.getLedgerId(), entry.getEntryId(), msgMetadata)) {
+            }
+            // 过滤掉定时消息
+            else if (trackDelayedDelivery(entry.getLedgerId(), entry.getEntryId(), msgMetadata)) {
                 // The message is marked for delayed delivery. Ignore for now.
                 entries.set(i, null);
                 entry.release();
@@ -236,7 +240,7 @@ public abstract class AbstractBaseDispatcher implements Dispatcher {
                         && ((PersistentSubscription) subscription)
                         .getPendingAckHandle() instanceof PendingAckHandleImpl) {
                     PositionImpl positionInPendingAck =
-                            ((PersistentSubscription) subscription).getPositionInPendingAck(position);
+                            ((PersistentSubscription) subscription).getPositionInPendingAck(position);      // 事务里ack了的消息
                     // if this position not in pendingAck state, don't need to do any op
                     if (positionInPendingAck != null) {
                         if (positionInPendingAck.hasAckSet()) {

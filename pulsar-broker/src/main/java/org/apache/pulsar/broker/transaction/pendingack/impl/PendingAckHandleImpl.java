@@ -94,7 +94,7 @@ public class PendingAckHandleImpl extends PendingAckHandleState implements Pendi
      *     <p>
      *         If it does not exits the map, the position will be added to the map.
      */
-    private Map<PositionImpl, MutablePair<PositionImpl, Integer>> individualAckPositions;
+    private Map<PositionImpl, MutablePair<PositionImpl, Integer>> individualAckPositions;       // individualAckOfTransaction存的是txid对应的ack的消息, individualAckPositions存的是所有txid的, 按position来查找
 
     /**
      * The map is for transaction with position witch was cumulative acked by this transaction.
@@ -183,6 +183,9 @@ public class PendingAckHandleImpl extends PendingAckHandleState implements Pendi
         acceptQueue.add(() -> internalIndividualAcknowledgeMessage(txnID, positions, completableFuture));
     }
 
+    /**
+     * 将postionImpl保存到ledger里, 然后内存(pendingAckHandle)维护已经ack的position以及ackSet
+     */
     public void internalIndividualAcknowledgeMessage(TxnID txnID, List<MutablePair<PositionImpl, Integer>> positions,
                                                      CompletableFuture<Void> completableFuture) {
         if (txnID == null) {
@@ -231,6 +234,7 @@ public class PendingAckHandleImpl extends PendingAckHandleState implements Pendi
                                 bitSetRecyclable.set(positionIntegerMutablePair.right, bitSetRecyclable.size());
                                 long[] ackSetOverlap = bitSetRecyclable.toLongArray();
                                 bitSetRecyclable.recycle();
+                                // 判断事务里的ackSet和cursor里的是否有重合, 重合说明有异常
                                 if (isAckSetOverlap(ackSetOverlap,
                                         ((ManagedCursorImpl) persistentSubscription.getCursor())
                                                 .getBatchPositionAckSet(position))) {
@@ -243,6 +247,7 @@ public class PendingAckHandleImpl extends PendingAckHandleState implements Pendi
                                     return;
                                 }
 
+                                // batch message ackSet不能有交集
                                 if (individualAckPositions != null
                                         && individualAckPositions.containsKey(position)
                                         && isAckSetOverlap(individualAckPositions
@@ -256,6 +261,7 @@ public class PendingAckHandleImpl extends PendingAckHandleState implements Pendi
                                     return;
                                 }
                             } else {
+                                // 非batch message不能重复消费
                                 if (individualAckPositions != null
                                         && individualAckPositions.containsKey(position)) {
                                     String errorMsg = "[" + topicName + "][" + subName + "] Transaction:"
@@ -467,6 +473,7 @@ public class PendingAckHandleImpl extends PendingAckHandleState implements Pendi
                                     log.debug("[{}] Transaction pending ack store commit txnId : "
                                             + "[{}] success! subName: [{}]", topicName, txnID, subName);
                                 }
+                                // 提交individual ack positions等信息 + 从individualAckOfTransaction中移除txId对应的数据
                                 individualAckCommitCommon(txnID, pendingAckMessageForCurrentTxn, properties);
                                 commitFuture.complete(null);
                                 handleLowWaterMark(txnID, lowWaterMark);
@@ -486,9 +493,13 @@ public class PendingAckHandleImpl extends PendingAckHandleState implements Pendi
         }
     }
 
+    /**
+     * 将pendingAckHandle里txid对应的ack消息的数据写到cursor里, 并清除pendingAckHandle里的相关数据
+     */
     @Override
     public CompletableFuture<Void> commitTxn(TxnID txnID, Map<String, Long> properties, long lowWaterMark) {
         CompletableFuture<Void> commitFuture = new CompletableFuture<>();
+        // 这里执行队列和加入队列都通过同一个单线程的executor来执行, 所以不会有并发数据问题.
         internalPinnedExecutor.execute(() -> {
             if (!checkIfReady()) {
                 switch (state) {
@@ -743,6 +754,8 @@ public class PendingAckHandleImpl extends PendingAckHandleState implements Pendi
                                            HashMap<PositionImpl, PositionImpl> currentTxn,
                                            Map<String, Long> properties) {
         if (currentTxn != null) {
+            // TODO 这里cursor异步持久化, 如果崩溃时内存里的数据还没持久化会不会导致数据异常?
+            // pendingAckHandler里的数据是持久化过的
             persistentSubscription.acknowledgeMessage(new ArrayList<>(currentTxn.values()),
                     AckType.Individual, properties);
             individualAckOfTransaction.remove(txnID);
@@ -770,6 +783,7 @@ public class PendingAckHandleImpl extends PendingAckHandleState implements Pendi
                 HashMap<PositionImpl, PositionImpl> pendingAckMessageForCurrentTxn =
                         individualAckOfTransaction.computeIfAbsent(txnID, txn -> new HashMap<>());
 
+                // 已经存在就更新ack了的消息, ackSet里对应位置置为0. 不存在就直接put
                 if (pendingAckMessageForCurrentTxn.containsKey(position)) {
                     andAckSet(pendingAckMessageForCurrentTxn.get(position), position);
                 } else {

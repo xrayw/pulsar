@@ -170,6 +170,7 @@ public class TopicTransactionBuffer extends TopicTransactionBufferState implemen
                                 snapshot.getMaxReadPositionEntryId());
                         if (snapshot.getAborts() != null) {
                             snapshot.getAborts().forEach(abortTxnMetadata ->
+                                // todo 疑问, 这里从投开始读, 老的数据又存下来了. (只需要最后一个快照??)
                                     aborts.put(new TxnID(abortTxnMetadata.getTxnIdMostBits(),
                                                     abortTxnMetadata.getTxnIdLeastBits()),
                                             PositionImpl.get(abortTxnMetadata.getLedgerId(),
@@ -177,6 +178,7 @@ public class TopicTransactionBuffer extends TopicTransactionBufferState implemen
                         }
                     }
 
+                    // replay snapshot后的消息, 保证一致性
                     @Override
                     public void handleTxnEntry(Entry entry) {
                         ByteBuf metadataAndPayload = entry.getDataBuffer();
@@ -184,14 +186,17 @@ public class TopicTransactionBuffer extends TopicTransactionBufferState implemen
                         MessageMetadata msgMetadata = Commands.peekMessageMetadata(metadataAndPayload,
                                 TopicTransactionBufferRecover.SUBSCRIPTION_NAME, -1);
                         if (msgMetadata != null && msgMetadata.hasTxnidMostBits() && msgMetadata.hasTxnidLeastBits()) {
+                            // 只处理事务相关的消息
                             TxnID txnID = new TxnID(msgMetadata.getTxnidMostBits(), msgMetadata.getTxnidLeastBits());
                             PositionImpl position = PositionImpl.get(entry.getLedgerId(), entry.getEntryId());
                             if (Markers.isTxnMarker(msgMetadata)) {
+                                // commit/abort(事务没了)都需要推进maxReadPosition
                                 if (Markers.isTxnAbortMarker(msgMetadata)) {
                                     aborts.put(txnID, position);
                                 }
                                 updateMaxReadPosition(txnID);
                             } else {
+                                // 更新ongoingTxns, 如果是事务的第一个消息, 那么要存到ongoingTxns里, 参与maxReadPosition的推进
                                 handleTransactionMessage(txnID, position);
                             }
                         }
@@ -269,6 +274,7 @@ public class TopicTransactionBuffer extends TopicTransactionBufferState implemen
             @Override
             public void addComplete(Position position, ByteBuf entryData, Object ctx) {
                 synchronized (TopicTransactionBuffer.this) {
+                    // 记录下事务的第一个消息的position即可
                     handleTransactionMessage(txnId, position);
                 }
                 completableFuture.complete(position);
@@ -309,10 +315,12 @@ public class TopicTransactionBuffer extends TopicTransactionBufferState implemen
             ByteBuf commitMarker = Markers.newTxnCommitMarker(-1L, txnID.getMostSigBits(),
                     txnID.getLeastSigBits());
             try {
+                // 写一个事务txnId相关的commitMarker到topic里, 表示事务已经提交
                 topic.getManagedLedger().asyncAddEntry(commitMarker, new AsyncCallbacks.AddEntryCallback() {
                     @Override
                     public void addComplete(Position position, ByteBuf entryData, Object ctx) {
                         synchronized (TopicTransactionBuffer.this) {
+                            // 事务的消息已经可读, 更新maxReadPosition
                             updateMaxReadPosition(txnID);
                             handleLowWaterMark(txnID, lowWaterMark);
                             clearAbortedTransactions();
@@ -475,13 +483,17 @@ public class TopicTransactionBuffer extends TopicTransactionBufferState implemen
         while (!aborts.isEmpty() && !((ManagedLedgerImpl) topic.getManagedLedger())
                 .ledgerExists(aborts.get(aborts.firstKey()).getLedgerId())) {
             if (log.isDebugEnabled()) {
-                aborts.firstKey();
+                aborts.firstKey();      // todo remove
                 log.debug("[{}] Topic transaction buffer clear aborted transaction, TxnId : {}, Position : {}",
                         topic.getName(), aborts.firstKey(), aborts.get(aborts.firstKey()));
             }
             aborts.remove(aborts.firstKey());
         }
     }
+
+    /**
+     * 事务commit/abort的时候才会更新maxReadPosition
+     */
     void updateMaxReadPosition(TxnID txnID) {
         PositionImpl preMaxReadPosition = this.maxReadPosition;
         ongoingTxns.remove(txnID);
@@ -588,7 +600,7 @@ public class TopicTransactionBuffer extends TopicTransactionBufferState implemen
 
         private final AtomicLong exceptionNumber = new AtomicLong();
 
-        public static final String SUBSCRIPTION_NAME = "transaction-buffer-sub";
+        public static final String SUBSCRIPTION_NAME = "transaction-buffer-sub";    // todo 所有topic都用同一个?
 
         private final TopicTransactionBuffer topicTransactionBuffer;
 
@@ -621,6 +633,8 @@ public class TopicTransactionBuffer extends TopicTransactionBufferState implemen
                 topic.getBrokerService().getPulsar().getTransactionBufferSnapshotService()
                         .createReader(TopicName.get(topic.getName())).thenAcceptAsync(reader -> {
                             try {
+                                // 先读取abortTxns的snapshot, 然后从最后一个snapshot的position开始读取消息做replay, 直到读到最新的消息
+                                // todo 为什么要重头到尾全量构建, 而不直接用最后一个消息?
                                 boolean hasSnapshot = false;
                                 while (reader.hasMoreEvents()) {
                                     Message<TransactionBufferSnapshot> message = reader.readNextAsync()
@@ -672,6 +686,7 @@ public class TopicTransactionBuffer extends TopicTransactionBufferState implemen
                             FillEntryQueueCallback fillEntryQueueCallback = new FillEntryQueueCallback(entryQueue,
                                     managedCursor, TopicTransactionBufferRecover.this);
                             if (lastConfirmedEntry.getEntryId() != -1) {
+                                // 读取最后一个snapshot后的消息来replay
                                 while (lastConfirmedEntry.compareTo(currentLoadPosition) > 0
                                         && fillEntryQueueCallback.fillQueue()) {
                                     Entry entry = entryQueue.poll();

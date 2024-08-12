@@ -263,11 +263,17 @@ public class NonPersistentTopic extends AbstractTopic implements Topic, TopicPol
                 replicateSubscriptionState, keySharedMeta, null);
     }
 
-    private CompletableFuture<Consumer> internalSubscribe(final TransportCnx cnx, String subscriptionName,
-                                                          long consumerId, SubType subType, int priorityLevel,
-                                                          String consumerName, boolean isDurable,
-                                                          MessageId startMessageId, Map<String, String> metadata,
-                                                          boolean readCompacted, InitialPosition initialPosition,
+    private CompletableFuture<Consumer> internalSubscribe(final TransportCnx cnx,
+                                                          String subscriptionName,
+                                                          long consumerId,
+                                                          SubType subType,
+                                                          int priorityLevel,
+                                                          String consumerName,
+                                                          boolean isDurable,
+                                                          MessageId startMessageId,
+                                                          Map<String, String> metadata,
+                                                          boolean readCompacted,
+                                                          InitialPosition initialPosition,
                                                           long resetStartMessageBackInSec,
                                                           boolean replicateSubscriptionState,
                                                           KeySharedMeta keySharedMeta,

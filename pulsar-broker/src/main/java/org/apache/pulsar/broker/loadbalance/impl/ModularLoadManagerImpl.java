@@ -481,7 +481,7 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
         updateAllBrokerData();
         updateBundleData();
         // broker has latest load-report: check if any bundle requires split
-        checkNamespaceBundleSplit();
+        checkNamespaceBundleSplit();        // 有数据变更的时候就会检查是否需要split bundle
     }
 
     // As the leader broker, update the broker data map in loadData by querying metadata store for the broker data put
@@ -492,6 +492,7 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
         for (String broker : activeBrokers) {
             try {
                 String key = String.format("%s/%s", LoadManager.LOADBALANCE_BROKERS_ROOT, broker);
+                // 如果有1w个broker, 要读1w次zk?
                 Optional<LocalBrokerData> localData = brokersData.readLock(key).get();
                 if (!localData.isPresent()) {
                     brokerDataMap.remove(broker);
@@ -514,6 +515,7 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
         // Remove obsolete brokers.
         for (final String broker : brokerDataMap.keySet()) {
             if (!activeBrokers.contains(broker)) {
+                // todo 用iterator删除, 而不是for里直接调用remove
                 brokerDataMap.remove(broker);
             }
         }
@@ -526,12 +528,14 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
         final Set<String> activeBundles = new HashSet<>();
         // Iterate over the broker data.
         for (Map.Entry<String, BrokerData> brokerEntry : loadData.getBrokerData().entrySet()) {
+            // todo 先遍历broker, 再遍历broker的每个bundle
             final String broker = brokerEntry.getKey();
             final BrokerData brokerData = brokerEntry.getValue();
             final Map<String, NamespaceBundleStats> statsMap = brokerData.getLocalData().getLastStats();
 
             // Iterate over the last bundle stats available to the current
             // broker to update the bundle data.
+            // todo 更新本地缓存的数据, 有就更新, 没有就新增
             for (Map.Entry<String, NamespaceBundleStats> entry : statsMap.entrySet()) {
                 final String bundle = entry.getKey();
                 final NamespaceBundleStats stats = entry.getValue();
@@ -580,8 +584,7 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
             brokerData.getTimeAverageData().reset(statsMap.keySet(), bundleData, defaultStats);
             final ConcurrentOpenHashMap<String, ConcurrentOpenHashSet<String>> namespaceToBundleRange =
                     brokerToNamespaceToBundleRange
-                            .computeIfAbsent(broker, k ->
-                                    ConcurrentOpenHashMap.<String,
+                            .computeIfAbsent(broker, k -> ConcurrentOpenHashMap.<String,
                                             ConcurrentOpenHashSet<String>>newBuilder()
                                             .build());
             synchronized (namespaceToBundleRange) {

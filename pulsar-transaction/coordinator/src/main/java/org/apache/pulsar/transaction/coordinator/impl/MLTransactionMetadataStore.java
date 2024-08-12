@@ -394,6 +394,7 @@ public class MLTransactionMetadataStore
                                     this.transactionTimeoutCount.increment();
                                 }
                                 if (newStatus == TxnStatus.COMMITTED || newStatus == TxnStatus.ABORTED) {
+                                    // endTxn的时候, 状态是commiting and aborting. 不会执行这个if (tc所在的broker会再次执行commited/aborted操作),这个if会在组播给txn对应的partitions的时候执行
                                     this.transactionMetadataStoreStats
                                             .addTransactionExecutionLatencySample(System.currentTimeMillis()
                                                     - txnMetaListPair.getLeft().getOpenTimestamp());

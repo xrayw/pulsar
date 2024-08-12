@@ -32,7 +32,7 @@ public class PositionAckSetUtil {
 
         BitSetRecyclable currentBitSet = BitSetRecyclable.valueOf(currentAckSet);
         BitSetRecyclable otherBitSet = BitSetRecyclable.valueOf(otherAckSet);
-        currentBitSet.flip(0, currentBitSet.size());
+        currentBitSet.flip(0, currentBitSet.size());        // 反转一下, 为1的就是ack过的. 直接通过and判断是否有交集
         otherBitSet.flip(0, otherBitSet.size());
         currentBitSet.and(otherBitSet);
         boolean isAckSetRepeated = !currentBitSet.isEmpty();

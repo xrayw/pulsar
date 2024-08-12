@@ -379,6 +379,7 @@ public class TransactionMetadataStoreService {
         getTxnMeta(txnID)
                 .thenCompose(txnMeta -> {
                     if (txnMeta.status() == TxnStatus.OPEN) {
+                        // endTransaction中updateTxnStatus只往transactionLog存一个marker
                         return updateTxnStatus(txnID, newStatus, TxnStatus.OPEN, isTimeout)
                                 .thenCompose(__ -> endTxnInTransactionBuffer(txnID, txnAction));
                     }
@@ -460,6 +461,7 @@ public class TransactionMetadataStoreService {
         return getTxnMeta(txnID)
                 .thenCompose(txnMeta -> {
                     long lowWaterMark = getLowWaterMark(txnID);
+                    // 请求事务里partition对应的broker. 去commit/abort事务
                     Stream<CompletableFuture<?>> onSubFutureStream = txnMeta.ackedPartitions().stream().map(tbSub -> {
                         switch (txnAction) {
                             case TxnAction.COMMIT_VALUE:
@@ -506,6 +508,9 @@ public class TransactionMetadataStoreService {
                 && !(e instanceof ManagedLedgerException.ManagedLedgerFencedException);
     }
 
+    /**
+     * 提交当前broker的事务的部分
+     */
     private CompletableFuture<Void> endTxnInTransactionMetadataStore(TxnID txnID, int txnAction) {
         if (TxnAction.COMMIT.getValue() == txnAction) {
             return updateTxnStatus(txnID, TxnStatus.COMMITTED, COMMITTING, false);
