@@ -88,6 +88,7 @@ class MutableBucket extends Bucket implements AutoCloseable {
             if (currentTimestampUpperLimit == 0) {
                 currentFirstTimestamp = timestamp;
                 firstScheduleTimestamps.add(currentFirstTimestamp);
+                // 一个时间区间一个segment, 超过时间范围的就放到下一个segment里
                 currentTimestampUpperLimit = timestamp + timeStepPerBucketSnapshotSegment - 1;
             }
 
@@ -106,6 +107,7 @@ class MutableBucket extends Bucket implements AutoCloseable {
                 sharedQueue.add(timestamp, ledgerId, entryId);
             }
 
+            // 对应ledger里有哪些消息
             bitMap.computeIfAbsent(ledgerId, k -> new RoaringBitmap()).add(entryId, entryId + 1);
 
             numMessages++;
@@ -173,6 +175,9 @@ class MutableBucket extends Bucket implements AutoCloseable {
         DelayedIndex lastDelayedIndex = firstSnapshotSegment.getIndexeAt(firstSnapshotSegment.getIndexesCount() - 1);
         Pair<ImmutableBucket, DelayedIndex> result = Pair.of(bucket, lastDelayedIndex);
 
+        // Q: 这里异步保存数据, 如何保证成功的?
+        // A: org.apache.pulsar.broker.delayed.bucket.BucketDelayedDeliveryTracker.afterCreateImmutableBucket
+        //    失败就把数据再放到内存队列里去
         CompletableFuture<Long> future = asyncSaveBucketSnapshot(bucket,
                 bucketSnapshotMetadata, bucketSnapshotSegments);
         bucket.setSnapshotCreateFuture(future);

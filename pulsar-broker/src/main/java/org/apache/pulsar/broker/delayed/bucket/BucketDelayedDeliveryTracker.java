@@ -48,6 +48,7 @@ import javax.annotation.concurrent.ThreadSafe;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.mledger.ManagedCursor;
+import org.apache.bookkeeper.mledger.impl.ManagedCursorImpl;
 import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
@@ -315,6 +316,12 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
         }
     }
 
+    /**
+     * topic owner转移的时候, 会从deletedPosition开始往后读消息, 如果发现是delayedMsg, 就会调用addMessage将其放到delayedQueue里,
+     * recover的时候如果消息时间已经到达, 就会直接发给client, 不会再放到delayedQueue里
+     *
+     * Q: 不过这样还会导致 {@link ManagedCursorImpl#individualDeletedMessages} 根据不同的ack position区段存在内存里, 导致内存占用过高
+     */
     @Override
     public synchronized boolean addMessage(long ledgerId, long entryId, long deliverAt) {
         if (containsMessage(ledgerId, entryId)) {
@@ -497,10 +504,19 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
                             delayedIndexBitMap.values().forEach(RoaringBitmap::runOptimize);
                             immutableBucketDelayedIndexPair.getLeft().setDelayedIndexBitMap(delayedIndexBitMap);
 
+                            // 创建新的immutableBucket的操作可能失败, 即使失败, 也把buckets从immutableBuckets里删掉
+                            // 失败的话添加回sharedDelayQueue, 重新sealBucket后, entryId就会比老的大, 但老的bucket里的时间可能比新的bucke里的小, 是如何解决这个问题的?
+                            // TODO 这里是否应该先删除buckets, 再添加新的merge后的bucket -> 不影响结果, 但逻辑不清晰
                             afterCreateImmutableBucket(immutableBucketDelayedIndexPair, createStartTime);
 
                             immutableBucketDelayedIndexPair.getLeft().getSnapshotCreateFuture()
                                     .orElse(NULL_LONG_PROMISE).thenCompose(___ -> {
+                                        // 新的immutableBucket创建成功后, 再删除用来merge的buckets
+                                        // 如果创建失败, 用来merge的buckets就不会删除, 同时他们的内容会被放进内存里.
+                                        //   也会从immutableBuckets rangeMap里删除,
+                                        //      1. 如果没有发生topic owner转移, 也不会再去加载还没删除的bucket里面的内容
+                                        //      1. 如果发生了topic owner转移, 新的owner就会通过recover, 加载这些bucket的内容到内存+immutableBuckets里
+                                        //   这样就能保证正确性
                                         List<CompletableFuture<Void>> removeFutures =
                                                 buckets.stream().map(bucket -> bucket.asyncDeleteBucketSnapshot(stats))
                                                         .toList();
@@ -596,6 +612,7 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
                     break;
                 }
 
+                // 这里加载如来, 放到内存的sharedBucketPriorityQueue里, 如果程序crash, 这部分数据不是丢了?
                 long loadStartTime = System.currentTimeMillis();
                 stats.recordTriggerEvent(BucketDelayedMessageIndexStats.Type.load);
                 CompletableFuture<Void> loadFuture = pendingLoad = bucket.asyncLoadNextBucketSnapshotEntry()

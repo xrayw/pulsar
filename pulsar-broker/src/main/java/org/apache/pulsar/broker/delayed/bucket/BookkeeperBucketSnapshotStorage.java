@@ -79,6 +79,7 @@ public class BookkeeperBucketSnapshotStorage implements BucketSnapshotStorage {
     @Override
     public CompletableFuture<List<SnapshotSegment>> getBucketSnapshotSegment(long bucketId, long firstSegmentEntryId,
                                                                              long lastSegmentEntryId) {
+        // 一个segment存的一个entry
         return getLedgerHandle(bucketId).thenCompose(
                 ledgerHandle -> getLedgerEntry(ledgerHandle, firstSegmentEntryId, lastSegmentEntryId)
                         .thenApply(this::parseSnapshotSegmentEntries));

@@ -149,6 +149,8 @@ abstract class Bucket {
                         }), BucketSnapshotPersistenceException.class, MaxRetryTimes).thenCompose(newBucketId -> {
                     bucket.setBucketId(newBucketId);
 
+                    // Q: 这里如果失败怎么处理的?
+                    // A: 失败再加回内存里
                     return putBucketKeyId(bucketKey, newBucketId).exceptionally(ex -> {
                         log.warn("[{}] Failed to record bucketId to cursor property, bucketKey: {}, bucketId: {}",
                                 dispatcherName, bucketKey, newBucketId, ex);
